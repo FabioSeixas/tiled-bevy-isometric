@@ -35,6 +35,32 @@ commands.spawn(Screenshot::primary_window())
 
 This is an environment quirk, not a bug in the app or the dependency stack.
 
+The window in this sandbox also has a short lifetime — it can self-close
+("No windows are open, exiting") well under 2 real seconds after creation, in
+some runs and not others, independent of frame count. A verification probe
+that waits on a fixed frame number (e.g. `Local<u32>` incremented once per
+`Update`) can miss its own screenshot/exit if frame pacing is slower than
+assumed; prefer `Res<Time>::elapsed_secs()` thresholds kept under ~1s total,
+and take only one screenshot per run (spawning a second `Screenshot` shortly
+after the first has been observed to destabilize the window in this sandbox).
+
+## Synthetic key input for probes must land in `PreUpdate`, after `InputSystems`
+
+A probe that calls `ButtonInput::press()`/`release()` to simulate a keypress
+(see `SIM_KEYS` above) must run in `PreUpdate`, ordered `.after(bevy::input::
+InputSystems)` — not in `Update`. Real winit key events are translated into
+`ButtonInput` during `PreUpdate`, before any `Update` system runs, so
+`just_pressed()` is stable for an `Update` system's entire tick regardless of
+system ordering. A synthetic press injected from an ordinary `Update` system
+races against every other `Update` system reading the same tick: whichever
+runs first sees stale state, and `just_pressed` is cleared again before the
+next tick's `Update` even if the following frame calls `release()`. This bit
+a probe for `subtile_debug.rs`'s "g" toggle (which reads `just_pressed`) —
+injecting from `Update` silently never toggled the state, with no error.
+Systems that instead check `pressed()`/`any_pressed()` (continuous, not
+edge-triggered) are not affected, since holding the key across many frames
+gives every system a chance to observe it eventually.
+
 ## Collision is hand-rolled from Tiled data, not a physics engine
 
 `src/collision.rs` reads each placed tile's Tile Collision Editor
