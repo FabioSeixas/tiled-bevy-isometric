@@ -20,6 +20,13 @@ use bevy_ecs_tiled::prelude::*;
 pub struct IsoGrid {
     pub grid: TilemapGridSize,
     pub offset: Vec2,
+    /// `map height in tiles * tallest tile's pixel height`, i.e. the same
+    /// `map_size.y * tile_size.y` denominator `bevy_ecs_tilemap`'s `y_sort`
+    /// divides world Y by (see `render/material.rs` in that crate) to build
+    /// its per-chunk sort key. Anything drawn at this crate's `y_sort`
+    /// convention (the character sprite, in `character.rs`) must divide by
+    /// the same value or its depth won't line up with the tilemap's.
+    pub y_sort_extent: f32,
 }
 
 impl Default for IsoGrid {
@@ -27,6 +34,7 @@ impl Default for IsoGrid {
         Self {
             grid: TilemapGridSize { x: 64.0, y: 32.0 },
             offset: Vec2::ZERO,
+            y_sort_extent: 1.0,
         }
     }
 }
@@ -55,6 +63,7 @@ fn update_iso_grid(
             &map_asset.largest_tile_size,
             &crate::collision::MAP_ANCHOR,
         );
+        grid.y_sort_extent = map_asset.map.height as f32 * map_asset.largest_tile_size.y;
     }
 }
 

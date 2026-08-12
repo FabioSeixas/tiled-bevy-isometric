@@ -97,6 +97,35 @@ with* `y_sort: true`, so every tile gets its own chunk and its own correct
 sort key. If wall/stack rendering ever looks broken again, check both of
 these are still set together, not just one.
 
+## Sprites need a Z that follows `y_sort`, not a fixed value
+
+`y_sort: true` (see above) only reorders tilemap chunks against each other —
+a plain sprite entity (the character, in `character.rs`) shares the same
+`Transparent2d` render phase but isn't part of any tilemap chunk, so a fixed
+`Transform.translation.z` can't interleave with it as the sprite crosses
+rows: it ends up always in front of or always behind every wall tile,
+regardless of position. The fix is for the sprite to compute its Z the same
+way `bevy_ecs_tilemap` computes a chunk's y_sort key every frame — see
+`render/material.rs` in that crate: `1.0 - world_y / (map_size.y *
+tile_size.y)` — against the baseline that the topmost (last-spawned) tile
+layer always lands at exactly Z=0 (`bevy_ecs_tiled`'s `spawn_layers`
+accumulates each layer's Z from `-(layer_count - 1) * offset` up to `0` for
+the last one, regardless of layer count — see `map/spawn.rs` and
+`TiledMapLayerZOffset`'s doc comment in that crate). `IsoGrid::y_sort_extent`
+(`iso.rs`) caches the denominator from the loaded map; `character.rs`'s
+`sync_player_transform` applies the formula every frame. Any other sprite
+entity meant to sort against the tilemap needs the same treatment.
+
+## Tiled CSV tile coordinates are Y-flipped from `TilePos`
+
+`bevy_ecs_tiled`'s `TiledMapAsset::for_each_tile` (`map/asset.rs`) inverts the
+Y axis when building each tile's `TilePos`: `TilePos.y = tilemap_size.y - 1 -
+csv_row`. So a tile's raw row index in `map.tmx`'s CSV layer data is *not*
+its `TilePos.y` (and therefore not a `Player.tile_pos.y`, which shares that
+convention) — reading coordinates straight off the TMX XML and using them
+as-is (e.g. to pick a test position near a specific wall cluster) silently
+points at the wrong row. Flip with `ty = map_height - 1 - csv_row` first.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
