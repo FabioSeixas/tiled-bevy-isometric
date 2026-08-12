@@ -38,6 +38,17 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         TiledMap(asset_server.load("map.tmx")),
         TilemapAnchor::Center,
+        // Tiles here are taller than the grid's diamond footprint (64x64
+        // art on a 64x32 grid), so two diamond-adjacent tiles can overlap
+        // on screen. `bevy_ecs_tilemap` only reorders draws *between*
+        // render chunks (via `y_sort`, keyed on each chunk's world Y), not
+        // within one — and the whole map fits in a single default-sized
+        // chunk, so without shrinking chunks to one tile each, overlapping
+        // tiles draw in tile-spawn order instead of back-to-front.
+        TilemapRenderSettings {
+            render_chunk_size: UVec2::new(1, 1),
+            y_sort: true,
+        },
     ));
 }
 

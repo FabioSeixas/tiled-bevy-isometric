@@ -63,6 +63,39 @@ exact same `try_move`/`is_point_blocked` path as real movement, either
 stepping the character through tile-space or testing one exact world point,
 and can save a screenshot at the end. `cargo run` also still logs `Built N
 tile collision polygon(s) from Tiled data` on map load as a quick sanity count.
+`SIM_KEYS` in the same file drives real `KeyCode`s into `ButtonInput` instead,
+so it exercises `move_player`'s keyboard mapping itself (not just collision)
+and reports both the tile-space and world-space delta produced — use it to
+check that a given key actually moves the character the way it looks like it
+should on screen.
+
+## Tile-space axes are diagonal on screen — keyboard input needs conversion
+
+`iso.rs::tile_to_world` is the standard isometric diamond projection: moving
+along tile-x *or* tile-y alone always produces a diagonal screen direction,
+never straight up/down/left/right. So `move_player` must not feed keyboard
+axes into tile-space directly — it converts screen-space intent (what Up/
+Down/Left/Right should look like on screen) into a tile-space delta via
+`iso.rs::screen_dir_to_tile_dir`, the inverse of `tile_to_world`'s linear
+part. If movement ever looks diagonal again, this is the first thing to
+check; `iso.rs`'s unit test asserts the inverse round-trips for all four
+cardinal screen directions.
+
+## Tall tile art needs `y_sort` with 1-tile render chunks, not just `y_sort`
+
+`assets/experiment.tsx` tiles are 64x64 against this map's 64x32 grid
+footprint, so diamond-adjacent tiles routinely overlap on screen and need
+back-to-front draw order to composite correctly (this is *not* the collision
+system — collision is a separate hand-rolled polygon check, untouched by
+this). `bevy_ecs_tilemap`'s `TilemapRenderSettings.y_sort` only reorders
+draws *between* render chunks, keyed on each chunk's own world-space Y — it
+does nothing for tiles within the same chunk. Since this map (30x20) fits
+inside the crate's default chunk size (64x64), the whole layer was one
+chunk, so enabling `y_sort` alone would have been a no-op. The fix (in
+`main.rs`'s `setup`) sets `render_chunk_size: UVec2::new(1, 1)` *together
+with* `y_sort: true`, so every tile gets its own chunk and its own correct
+sort key. If wall/stack rendering ever looks broken again, check both of
+these are still set together, not just one.
 
 ## Maintaining this file
 

@@ -65,3 +65,34 @@ pub fn tile_to_world(tile: Vec2, grid: &TilemapGridSize, offset: Vec2) -> Vec2 {
         grid.y * 0.5 * (tile.y - tile.x),
     ) + offset
 }
+
+/// Converts an on-screen direction (e.g. "up" = `Vec2::Y`) into the
+/// tile-space direction that, once run through `tile_to_world`, moves along
+/// that screen direction. This is `tile_to_world`'s linear part inverted
+/// (the constant `offset` doesn't matter for a direction, only a position).
+///
+/// Tile-space axes are diagonal on screen (see `tile_to_world`), so this is
+/// not the identity: keyboard input meant to feel like screen-space up/down/
+/// left/right must go through this before being treated as a tile delta.
+pub fn screen_dir_to_tile_dir(dir: Vec2, grid: &TilemapGridSize) -> Vec2 {
+    Vec2::new(dir.x / grid.x - dir.y / grid.y, dir.x / grid.x + dir.y / grid.y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_dir_to_tile_dir_inverts_tile_to_world() {
+        let grid = TilemapGridSize { x: 64.0, y: 32.0 };
+        for screen_dir in [Vec2::Y, Vec2::NEG_Y, Vec2::X, Vec2::NEG_X] {
+            let tile_dir = screen_dir_to_tile_dir(screen_dir, &grid);
+            let world_dir = tile_to_world(tile_dir, &grid, Vec2::ZERO);
+            let normalized = world_dir.normalize();
+            assert!(
+                normalized.distance(screen_dir) < 1e-4,
+                "screen_dir {screen_dir:?} -> tile_dir {tile_dir:?} -> world_dir {world_dir:?}, normalized {normalized:?}"
+            );
+        }
+    }
+}

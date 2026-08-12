@@ -11,6 +11,14 @@
 //! - `PROBE_STEP`   = "dx,dy" tile-space delta applied every frame
 //! - `PROBE_FRAMES` = frame count to run before reporting (default 60)
 //! - `PROBE_SCREENSHOT_PATH` = optional path to save a screenshot on the last frame
+//!
+//! `SIM_KEYS` drives a different probe: it presses real `KeyCode`s into the
+//! `ButtonInput<KeyCode>` resource every frame, so the actual `move_player`
+//! system (keyboard mapping included) runs exactly as it would for a human
+//! player, instead of bypassing it like the tile-step probe above does.
+//! - `SIM_KEYS` = comma-separated `KeyCode` names, e.g. "ArrowUp" or "ArrowUp,ArrowRight"
+//! - `SIM_FRAMES` = frame count to hold the keys before reporting (default 60)
+//! - `SIM_SCREENSHOT_PATH` = optional path to save a screenshot on the last frame
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -23,6 +31,10 @@ pub struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn build(&self, app: &mut App) {
+        if std::env::var("SIM_KEYS").is_ok() {
+            app.add_systems(Update, run_key_simulation);
+            return;
+        }
         if std::env::var("PROBE_WORLD_POINT").is_ok() {
             app.add_systems(Update, run_world_point_probe);
             return;
@@ -31,6 +43,89 @@ impl Plugin for ProbePlugin {
             return;
         }
         app.add_systems(Update, run_probe);
+    }
+}
+
+fn key_code_from_name(name: &str) -> Option<KeyCode> {
+    match name.trim() {
+        "ArrowUp" => Some(KeyCode::ArrowUp),
+        "ArrowDown" => Some(KeyCode::ArrowDown),
+        "ArrowLeft" => Some(KeyCode::ArrowLeft),
+        "ArrowRight" => Some(KeyCode::ArrowRight),
+        "KeyW" => Some(KeyCode::KeyW),
+        "KeyA" => Some(KeyCode::KeyA),
+        "KeyS" => Some(KeyCode::KeyS),
+        "KeyD" => Some(KeyCode::KeyD),
+        _ => None,
+    }
+}
+
+/// Holds the keys named in `SIM_KEYS` for `SIM_FRAMES` frames, driving the
+/// real `move_player` system, then logs how far the character actually
+/// moved (`SIM_RESULT tile_delta=(...) world_delta=(...)`) so the reported
+/// direction can be checked against what the keys were supposed to do on
+/// screen (e.g. `ArrowUp` should produce a world delta with `x == 0`).
+///
+/// Waits `SIM_WARMUP_FRAMES` (default 90) frames with no keys held before
+/// starting to record, so the map asset has already finished loading and
+/// `IsoGrid`'s grid/offset (which jump once, from their startup defaults, on
+/// `TiledEvent<MapCreated>`) are stable for the whole measurement window.
+fn run_key_simulation(
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut frame: Local<u32>,
+    mut start: Local<Option<(Vec2, Vec3)>>,
+    mut commands: Commands,
+    query: Query<(&Player, &Transform)>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok((player, transform)) = query.single() else {
+        return;
+    };
+
+    let warmup_frames: u32 = std::env::var("SIM_WARMUP_FRAMES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(90);
+
+    *frame += 1;
+    if *frame <= warmup_frames {
+        return;
+    }
+
+    if start.is_none() {
+        *start = Some((player.tile_pos, transform.translation));
+    }
+
+    let keys: Vec<KeyCode> = std::env::var("SIM_KEYS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(key_code_from_name)
+        .collect();
+    for key in &keys {
+        keyboard.press(*key);
+    }
+
+    let total_frames: u32 = std::env::var("SIM_FRAMES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+    let elapsed = *frame - warmup_frames;
+
+    if elapsed == total_frames {
+        let (start_tile, start_world) = start.unwrap();
+        let tile_delta = player.tile_pos - start_tile;
+        let world_delta = transform.translation - start_world;
+        info!(
+            "SIM_RESULT tile_delta=({:.4},{:.4}) world_delta=({:.3},{:.3},{:.3})",
+            tile_delta.x, tile_delta.y, world_delta.x, world_delta.y, world_delta.z
+        );
+        if let Ok(path) = std::env::var("SIM_SCREENSHOT_PATH") {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path));
+        }
+    } else if elapsed == total_frames + 5 {
+        exit.write(AppExit::Success);
     }
 }
 

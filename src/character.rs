@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
 use crate::collision::{TileCollisionPolygons, is_point_blocked};
-use crate::iso::{IsoGrid, tile_to_world};
+use crate::iso::{IsoGrid, screen_dir_to_tile_dir, tile_to_world};
 
 /// The controllable character. Position is tracked in fractional tile-space
 /// (not world pixels) since that's the natural unit for isometric movement
@@ -67,23 +67,26 @@ fn move_player(
         return;
     };
 
-    let mut input = Vec2::ZERO;
+    // Screen-space intent: Up/Down/Left/Right as they'd look on screen, not
+    // as tile-space axes (which are diagonal on screen — see `iso.rs`).
+    let mut screen_input = Vec2::ZERO;
     if keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        input.y -= 1.0;
+        screen_input.y += 1.0;
     }
     if keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        input.y += 1.0;
+        screen_input.y -= 1.0;
     }
     if keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        input.x -= 1.0;
+        screen_input.x -= 1.0;
     }
     if keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        input.x += 1.0;
+        screen_input.x += 1.0;
     }
-    if input == Vec2::ZERO {
+    if screen_input == Vec2::ZERO {
         return;
     }
 
+    let input = screen_dir_to_tile_dir(screen_input, &grid.grid);
     let delta = input.normalize() * MOVE_SPEED_TILES_PER_SEC * time.delta_secs();
 
     // Resolve each axis independently so the character slides along a
