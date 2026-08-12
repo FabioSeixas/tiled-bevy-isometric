@@ -48,7 +48,7 @@ impl Plugin for IsoPlugin {
     }
 }
 
-fn update_iso_grid(
+pub(crate) fn update_iso_grid(
     mut events: MessageReader<TiledEvent<MapCreated>>,
     map_assets: Res<Assets<TiledMapAsset>>,
     mut grid: ResMut<IsoGrid>,

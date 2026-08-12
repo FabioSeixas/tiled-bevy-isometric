@@ -2,6 +2,8 @@ mod character;
 mod collision;
 mod debug_probe;
 mod iso;
+mod subtile;
+mod subtile_debug;
 mod zsort_debug;
 
 use bevy::prelude::*;
@@ -12,6 +14,8 @@ use character::CharacterPlugin;
 use collision::CollisionPlugin;
 use debug_probe::ProbePlugin;
 use iso::IsoPlugin;
+use subtile::SubtilePlugin;
+use subtile_debug::SubtileDebugPlugin;
 use zsort_debug::ZsortDebugPlugin;
 
 fn main() {
@@ -22,6 +26,7 @@ fn main() {
         // Pulls in bevy_ecs_tilemap::TilemapPlugin automatically.
         .add_plugins(TiledPlugin::default())
         .add_plugins((CollisionPlugin, IsoPlugin, CharacterPlugin, ProbePlugin))
+        .add_plugins((SubtilePlugin, SubtileDebugPlugin))
         .add_plugins(ZsortDebugPlugin)
         .add_systems(
             Update,

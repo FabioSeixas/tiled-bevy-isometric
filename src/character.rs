@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
-use crate::collision::{TileCollisionPolygons, is_point_blocked};
 use crate::iso::{IsoGrid, screen_dir_to_tile_dir, tile_to_world};
+use crate::subtile::SubtileGrid;
 
 /// The controllable character. Position is tracked in fractional tile-space
 /// (not world pixels) since that's the natural unit for isometric movement
@@ -164,7 +164,7 @@ fn move_player(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
     grid: Res<IsoGrid>,
-    polygons: Res<TileCollisionPolygons>,
+    subtiles: Res<SubtileGrid>,
     mut query: Query<(&mut Player, &mut PlayerAnimation)>,
 ) {
     let Ok((mut player, mut anim)) = query.single_mut() else {
@@ -209,8 +209,8 @@ fn move_player(
     let step_x = screen_dir_to_tile_dir(Vec2::new(screen_input.x, 0.0), &grid.grid) * scale;
     let step_y = screen_dir_to_tile_dir(Vec2::new(0.0, screen_input.y), &grid.grid) * scale;
 
-    let moved_x = try_move(&mut player.tile_pos, step_x, &grid, &polygons);
-    let moved_y = try_move(&mut player.tile_pos, step_y, &grid, &polygons);
+    let moved_x = try_move(&mut player.tile_pos, step_x, &subtiles);
+    let moved_y = try_move(&mut player.tile_pos, step_y, &subtiles);
 
     // Face whichever screen-axis intent actually resulted in movement, not
     // just the raw key intent — otherwise a diagonal press that's fully
@@ -246,14 +246,15 @@ fn animate_player(time: Res<Time>, mut query: Query<(&mut PlayerAnimation, &mut 
 }
 
 /// Returns whether the move actually happened (i.e. wasn't blocked).
-pub(crate) fn try_move(
-    tile_pos: &mut Vec2,
-    delta: Vec2,
-    grid: &IsoGrid,
-    polygons: &TileCollisionPolygons,
-) -> bool {
+///
+/// Checks only the candidate subtile itself — this is deliberate, not an
+/// oversight: it's what makes diagonal corner-cutting through a blocked
+/// corner possible, per the design brief this prototype validates. Adding a
+/// check on the two subtiles flanking a diagonal step would close that gap,
+/// but that's explicitly not wanted here.
+pub(crate) fn try_move(tile_pos: &mut Vec2, delta: Vec2, subtiles: &SubtileGrid) -> bool {
     let candidate = *tile_pos + delta;
-    if is_point_blocked(tile_to_world(candidate, &grid.grid, grid.offset), polygons) {
+    if subtiles.is_blocked(candidate) {
         false
     } else {
         *tile_pos = candidate;

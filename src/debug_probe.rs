@@ -25,7 +25,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::character::{Player, try_move};
 use crate::collision::{TileCollisionPolygons, is_point_blocked};
-use crate::iso::IsoGrid;
+use crate::subtile::SubtileGrid;
 
 pub struct ProbePlugin;
 
@@ -182,8 +182,7 @@ fn run_probe(
     mut commands: Commands,
     mut frame: Local<u32>,
     mut started: Local<bool>,
-    grid: Res<IsoGrid>,
-    polygons: Res<TileCollisionPolygons>,
+    subtiles: Res<SubtileGrid>,
     mut query: Query<&mut Player>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -202,7 +201,7 @@ fn run_probe(
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
 
-    try_move(&mut player.tile_pos, step, &grid, &polygons);
+    try_move(&mut player.tile_pos, step, &subtiles);
     *frame += 1;
 
     if *frame == total_frames {

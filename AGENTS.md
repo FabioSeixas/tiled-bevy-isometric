@@ -41,9 +41,20 @@ This is an environment quirk, not a bug in the app or the dependency stack.
 `<objectgroup>` polygon straight from `TiledMapAsset.map` (via
 `bevy_ecs_tiled`'s core API, never its `physics` feature — no Avian/Rapier
 dependency exists in this repo, deliberately) and converts it to a world-space
-polygon once per `TiledEvent<MapCreated>`. `src/character.rs` does a plain
-point-in-polygon check against the character's position every frame; no
-collider shapes are spawned as entities.
+polygon once per `TiledEvent<MapCreated>`; no collider shapes are spawned as
+entities.
+
+Movement itself does not check these polygons directly. `src/subtile.rs`
+subdivides every tile into a 2x2 grid of boolean subtiles (`SubtileGrid`) —
+the actual unit `try_move` (`src/character.rs`) resolves against — auto-derived
+once at map load by sampling each subtile's center against the polygons above
+(a fully-covered tile ends up with all 4 subtiles blocked, matching old
+whole-tile behavior), then hand-overridden for two specific tiles
+(`PARTIAL_WALL_TILE`, `CORNER_CUT_TILE`) to demonstrate partial walls and
+diagonal corner-cutting. `try_move` only checks the destination subtile, never
+the two subtiles flanking a diagonal step — corner-cutting through a blocked
+corner is deliberate, not a bug. `SUBTILE_DEBUG=1` overlays each subtile's
+walkable/blocked state as a colored diamond (`src/subtile_debug.rs`).
 
 Tile-space-to-world-space conversion (`src/iso.rs::tile_to_world`) must
 include the same `TilemapAnchor` offset that `tile_relative_position` (used

@@ -27,7 +27,7 @@ impl Plugin for CollisionPlugin {
 /// Must match the `TilemapAnchor` inserted alongside `TiledMap` in `main.rs`.
 pub const MAP_ANCHOR: TilemapAnchor = TilemapAnchor::Center;
 
-fn build_collision_polygons(
+pub(crate) fn build_collision_polygons(
     mut events: MessageReader<TiledEvent<MapCreated>>,
     map_assets: Res<Assets<TiledMapAsset>>,
     mut polygons: ResMut<TileCollisionPolygons>,
