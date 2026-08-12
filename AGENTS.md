@@ -166,6 +166,42 @@ disagree after that, the bug is somewhere this loop hasn't checked yet (e.g.
 a specific map region/tile shape not yet probed) — narrow it with more probe
 positions before touching the formula itself.
 
+## Z-order: what has been ruled out at runtime (investigation paused, unresolved)
+
+A fourth investigation into the reported character/wall z-order bug was paused
+part-way. It did **not** find the bug and did **not** reproduce it, but it did
+close off some theories with runtime evidence rather than reasoning, so future
+sessions should not spend time re-deriving these:
+
+- `ZSORT_DEBUG=1` now also logs `ZSORT_INPUTS`, which reads the `TilemapSize` /
+  `TilemapTileSize` / inherited `GlobalTransform.z` **off the live tilemap
+  entities** — the values `bevy_ecs_tilemap` actually divides by and adds, as
+  opposed to `IsoGrid::y_sort_extent`'s re-derivation from the map asset. On
+  this map they agree (extent `1280`, topmost layer at `z=0`). This is the one
+  input that reading the formula cannot check, so check it first, not last.
+- `bevy_ecs_tilemap` centres a tile's quad **on** the tile's sort anchor
+  (`render/shaders/diamond_iso.wgsl`: `bot_left = center - 0.5 * tile_size`),
+  so 64x64 art on this 64x32 grid extends 32px above *and* below the point its
+  depth is keyed on. The character sprite instead uses `Anchor::BOTTOM_CENTER`,
+  sitting entirely above its own anchor. The two conventions differ; whether
+  that difference is the reported bug was **not** established.
+- `ZSORT_GIZMOS=1` (separate flag, `zsort_debug.rs`) draws each nearby tile's
+  sort anchor as its 64x32 diamond, coloured by the depth relation the renderer
+  will use, so anchor-vs-art alignment can be inspected instead of assumed.
+
+Two techniques worth reusing:
+
+- The character's 12 palette colours are **disjoint** from the tileset's 22, so
+  visible-character pixels can be counted exactly by colour-matching a
+  screenshot — a quantitative occlusion measure that removes the eyeballing
+  that earlier attempts relied on. The idle "facing down" frame is 360 opaque
+  px; compare against that for an occlusion fraction.
+- `SCREENSHOT_SEQ_PATH` (+ `SCREENSHOT_SEQ_START` / `SCREENSHOT_SEQ_COUNT`, see
+  `main.rs`) saves consecutive frames instead of one. With the character held
+  still, every frame must be byte-identical; any difference means draw order is
+  *unstable*, not merely wrong. A single screenshot cannot tell those apart,
+  which is a real gap in attempts 1-3. This mode was added but **not yet run**.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

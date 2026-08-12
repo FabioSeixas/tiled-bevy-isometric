@@ -36,6 +36,15 @@ fn main() {
         app.add_systems(Update, take_screenshot_and_exit(path));
     }
 
+    // Debug-only: capture a run of *consecutive* frames instead of one. A
+    // single screenshot can only ever show whichever side won the depth sort
+    // on that one frame, so it cannot distinguish "consistently wrong" from
+    // "flickering" — see AGENTS.md "A single screenshot cannot see draw-order
+    // instability".
+    if let Ok(prefix) = std::env::var("SCREENSHOT_SEQ_PATH") {
+        app.add_systems(Update, capture_frame_sequence(prefix));
+    }
+
     app.run();
 }
 
@@ -57,6 +66,45 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             y_sort: true,
         },
     ));
+}
+
+/// Saves one screenshot per frame for `SCREENSHOT_SEQ_COUNT` (default 20)
+/// consecutive frames starting at frame `SCREENSHOT_SEQ_START` (default 120,
+/// late enough that the map asset has loaded and `IsoGrid` has settled), to
+/// `{prefix}_000.png`, `{prefix}_001.png`, ... then exits.
+///
+/// The point is what a *single* screenshot structurally cannot show: with the
+/// character held still and no animation running, every frame in the run must
+/// be byte-identical. Any difference between consecutive frames means the draw
+/// order (or something else per-frame) is unstable rather than merely wrong —
+/// a distinction invisible to the one-shot `SCREENSHOT_PATH` mode.
+///
+/// Logs `SEQ_CAPTURE frame=N file=...` per frame so a capture can be
+/// correlated with `ZSORT_DEBUG`'s own frame counter.
+fn capture_frame_sequence(
+    prefix: String,
+) -> impl FnMut(Commands, Local<u32>, MessageWriter<AppExit>) {
+    let start: u32 = std::env::var("SCREENSHOT_SEQ_START")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+    let count: u32 = std::env::var("SCREENSHOT_SEQ_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+
+    move |mut commands: Commands, mut frame: Local<u32>, mut exit: MessageWriter<AppExit>| {
+        *frame += 1;
+        if *frame >= start && *frame < start + count {
+            let path = format!("{}_{:03}.png", prefix, *frame - start);
+            info!("SEQ_CAPTURE frame={} file={}", *frame, path);
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path));
+        } else if *frame == start + count + 10 {
+            exit.write(AppExit::Success);
+        }
+    }
 }
 
 fn take_screenshot_and_exit(

@@ -55,7 +55,140 @@ impl Plugin for ZsortDebugPlugin {
             return;
         }
         app.add_systems(Startup, spawn_debug_text)
-            .add_systems(Update, build_wall_tile_samples);
+            .add_systems(Update, (build_wall_tile_samples, report_real_tilemap_sort_inputs));
+
+        // Separate flag: the gizmos answer a different question from the
+        // numbers (where a tile's sort anchor sits *relative to its own art*),
+        // and they draw over the scene, so they must not be on by default when
+        // the overlay is.
+        if std::env::var("ZSORT_GIZMOS").is_ok() {
+            app.add_systems(Update, draw_sort_anchor_gizmos);
+        }
+    }
+}
+
+/// Draws each nearby wall tile's *sort anchor* — the exact world point whose Y
+/// becomes that tile's `y_sort` key — as its 64x32 diamond footprint, plus the
+/// character's own sort anchor as a cross.
+///
+/// Every prior investigation compared the character's sort Y against the
+/// tiles' sort Y and found them consistent. That check cannot see the failure
+/// this draws: whether a tile's sort anchor coincides with where that tile's
+/// *art* actually lands on screen. These tiles are 64x64 drawn on a 64x32
+/// grid, so the art extends well above its own footprint; if the anchor and
+/// the art's visual base disagree, depth can be computed perfectly and still
+/// look wrong, because the player judges "in front of" against the art.
+fn draw_sort_anchor_gizmos(
+    mut gizmos: Gizmos,
+    samples: Res<WallTileSamples>,
+    player: Query<&Transform, With<Player>>,
+) {
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    let p = player_transform.translation.xy();
+
+    // The character's sort anchor: where `sync_player_transform` places it,
+    // i.e. the sprite's feet.
+    gizmos.line_2d(p - Vec2::X * 40.0, p + Vec2::X * 40.0, Color::srgb(0.0, 1.0, 0.0));
+    gizmos.line_2d(p - Vec2::Y * 24.0, p + Vec2::Y * 24.0, Color::srgb(0.0, 1.0, 0.0));
+
+    for sample in samples.0.iter() {
+        let c = sample.world_tiled;
+        if c.distance(p) > 220.0 {
+            continue;
+        }
+        // Colour by the depth relation the renderer will actually use, so the
+        // predicted ordering is visible per-tile instead of inferred: red =
+        // this tile sorts behind the character (character should draw over
+        // it), blue = in front (it should draw over the character).
+        let color = if c.y > p.y {
+            Color::srgb(1.0, 0.0, 0.0)
+        } else {
+            Color::srgb(0.2, 0.4, 1.0)
+        };
+        gizmos.linestrip_2d(
+            [
+                c + Vec2::new(-32.0, 0.0),
+                c + Vec2::new(0.0, 16.0),
+                c + Vec2::new(32.0, 0.0),
+                c + Vec2::new(0.0, -16.0),
+                c + Vec2::new(-32.0, 0.0),
+            ],
+            color,
+        );
+    }
+}
+
+/// Logs, per spawned tilemap entity, the *actual* component values
+/// `bevy_ecs_tilemap` will feed into its `y_sort` key — rather than
+/// re-deriving them from the map asset, which is what `IsoGrid` (and every
+/// prior investigation) does.
+///
+/// This is the one input to the depth comparison that reading the formula
+/// cannot verify: `render/material.rs` divides by `chunk.map_size.y *
+/// chunk.tile_size.y` and adds the chunk's *inherited* Z, where `map_size` /
+/// `tile_size` are the `TilemapSize` / `TilemapTileSize` components
+/// `bevy_ecs_tiled` put on the tilemap entity (`map/spawn.rs` sets
+/// `tile_size` from the *tileset's* `tile_width`/`tile_height`, which need not
+/// equal the map asset's `largest_tile_size` that `IsoGrid::y_sort_extent`
+/// uses), and the Z baseline comes from the parent *layer* entity's transform,
+/// not the tilemap entity's own. If either disagrees with what
+/// `sync_player_transform` assumes, the character's Z is on a different scale
+/// or baseline from the tiles' and no amount of checking the formula itself
+/// will show it.
+///
+/// Emits `ZSORT_INPUTS ... MATCH` / `MISMATCH` per tilemap so the check is a
+/// pass/fail assertion, not a table to eyeball.
+fn report_real_tilemap_sort_inputs(
+    grid: Res<IsoGrid>,
+    tilemaps: Query<(
+        Entity,
+        &TilemapSize,
+        &TilemapTileSize,
+        &TilemapGridSize,
+        &GlobalTransform,
+    )>,
+    mut done: Local<bool>,
+) {
+    // Wait until both the tilemaps exist and `IsoGrid` has been overwritten
+    // from the loaded map (its default `y_sort_extent` is 1.0).
+    if *done || tilemaps.is_empty() || grid.y_sort_extent == 1.0 {
+        return;
+    }
+    *done = true;
+
+    for (entity, size, tile_size, grid_size, global) in &tilemaps {
+        let real_extent = size.y as f32 * tile_size.y;
+        // The character assumes every wall tile's layer sits at exactly Z=0
+        // (see `sync_player_transform`); the renderer instead adds this
+        // tilemap's inherited global Z to its y_sort key.
+        let real_baseline_z = global.translation().z;
+        let extent_matches = (real_extent - grid.y_sort_extent).abs() < 1e-3;
+        // Only the topmost layer sits at Z=0, and only that layer's tiles are
+        // ever the occluder side of a character/wall comparison. A lower layer
+        // reporting a negative baseline is this map's floor doing exactly what
+        // it should, not a defect — so don't label it as one.
+        let verdict = match (extent_matches, real_baseline_z == 0.0) {
+            (true, true) => "OK (topmost layer: character Z is directly comparable)",
+            (true, false) => "OK (below topmost layer: always behind the character, by design)",
+            (false, _) => "EXTENT MISMATCH: character Z is on a different scale from these tiles",
+        };
+        info!(
+            "ZSORT_INPUTS tilemap={entity} TilemapSize=({},{}) TilemapTileSize=({},{}) \
+             TilemapGridSize=({},{}) global_z={:.4} real_extent={:.2} \
+             iso_grid_y_sort_extent={:.2} {}",
+            size.x,
+            size.y,
+            tile_size.x,
+            tile_size.y,
+            grid_size.x,
+            grid_size.y,
+            real_baseline_z,
+            real_extent,
+            grid.y_sort_extent,
+            verdict,
+        );
     }
 }
 
