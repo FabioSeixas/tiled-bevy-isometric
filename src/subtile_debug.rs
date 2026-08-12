@@ -2,11 +2,11 @@
 //! nearby subtile's walkable/blocked state as a small diamond, and spawns a
 //! stationary "buddy" marker in the other half of the partial-wall test tile
 //! to demonstrate two occupants sharing what used to be a single tile.
-//! Disabled by default; matches `zsort_debug.rs`'s env-var-gated approach
-//! (see that file), just for a different question.
+//!
+//! Off by default; press `g` at any time to toggle the overlay on/off.
 //!
 //! Env vars:
-//! - `SUBTILE_DEBUG` = set (to anything) to enable every system in this module.
+//! - `SUBTILE_DEBUG` = set (to anything) to start the overlay already on.
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -18,17 +18,42 @@ use crate::subtile::{SUBTILES_PER_TILE, SUBTILE_SIZE, SubtileGrid, partial_wall_
 #[derive(Component)]
 struct SubtileDebugText;
 
+#[derive(Resource)]
+struct SubtileDebugState {
+    enabled: bool,
+}
+
+impl Default for SubtileDebugState {
+    fn default() -> Self {
+        Self {
+            enabled: std::env::var("SUBTILE_DEBUG").is_ok(),
+        }
+    }
+}
+
 pub struct SubtileDebugPlugin;
 
 impl Plugin for SubtileDebugPlugin {
     fn build(&self, app: &mut App) {
-        if std::env::var("SUBTILE_DEBUG").is_err() {
-            return;
-        }
-        app.add_systems(Startup, spawn_debug_text).add_systems(
-            Update,
-            (draw_subtile_grid_gizmos, spawn_debug_buddy, update_debug_text),
-        );
+        app.init_resource::<SubtileDebugState>()
+            .add_systems(Startup, spawn_debug_text)
+            .add_systems(
+                Update,
+                (
+                    toggle_debug_on_keypress,
+                    draw_subtile_grid_gizmos,
+                    spawn_debug_buddy,
+                    update_debug_text,
+                ),
+            );
+    }
+}
+
+/// Pressing `g` flips the overlay on/off, every run, regardless of whether
+/// `SUBTILE_DEBUG` was set at startup.
+fn toggle_debug_on_keypress(keyboard: Res<ButtonInput<KeyCode>>, mut state: ResMut<SubtileDebugState>) {
+    if keyboard.just_pressed(KeyCode::KeyG) {
+        state.enabled = !state.enabled;
     }
 }
 
@@ -36,8 +61,8 @@ impl Plugin for SubtileDebugPlugin {
 /// leaves open (see `subtile.rs`), once the real map has loaded (so the
 /// marker lands at the correct world position instead of `IsoGrid`'s
 /// pre-load default). Runs once, gated by `spawned`.
-fn spawn_debug_buddy(mut commands: Commands, grid: Res<IsoGrid>, mut spawned: Local<bool>) {
-    if *spawned || grid.y_sort_extent == 1.0 {
+fn spawn_debug_buddy(mut commands: Commands, grid: Res<IsoGrid>, state: Res<SubtileDebugState>, mut spawned: Local<bool>) {
+    if *spawned || !state.enabled || grid.y_sort_extent == 1.0 {
         return;
     }
     *spawned = true;
@@ -54,7 +79,16 @@ fn spawn_debug_buddy(mut commands: Commands, grid: Res<IsoGrid>, mut spawned: Lo
 /// Draws every subtile within a few tiles of the player as a small diamond,
 /// colored red (blocked) or green (walkable), so the logical grid this
 /// prototype enforces can be checked against what's actually drawn.
-fn draw_subtile_grid_gizmos(mut gizmos: Gizmos, subtiles: Res<SubtileGrid>, grid: Res<IsoGrid>, player: Query<&Player>) {
+fn draw_subtile_grid_gizmos(
+    mut gizmos: Gizmos,
+    subtiles: Res<SubtileGrid>,
+    grid: Res<IsoGrid>,
+    player: Query<&Player>,
+    state: Res<SubtileDebugState>,
+) {
+    if !state.enabled {
+        return;
+    }
     let Ok(player) = player.single() else {
         return;
     };
@@ -108,14 +142,27 @@ fn spawn_debug_text(mut commands: Commands) {
             right: Val::Px(8.0),
             ..default()
         },
+        Visibility::Hidden,
     ));
 }
 
-fn update_debug_text(subtiles: Res<SubtileGrid>, player: Query<&Player>, mut text: Query<&mut Text, With<SubtileDebugText>>) {
-    let Ok(player) = player.single() else {
+fn update_debug_text(
+    subtiles: Res<SubtileGrid>,
+    player: Query<&Player>,
+    state: Res<SubtileDebugState>,
+    mut text: Query<(&mut Text, &mut Visibility), With<SubtileDebugText>>,
+) {
+    let Ok((mut text, mut visibility)) = text.single_mut() else {
         return;
     };
-    let Ok(mut text) = text.single_mut() else {
+
+    if !state.enabled {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+    *visibility = Visibility::Visible;
+
+    let Ok(player) = player.single() else {
         return;
     };
     let coord = crate::subtile::subtile_coord(player.tile_pos);
