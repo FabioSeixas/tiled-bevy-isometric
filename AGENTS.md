@@ -166,41 +166,50 @@ disagree after that, the bug is somewhere this loop hasn't checked yet (e.g.
 a specific map region/tile shape not yet probed) — narrow it with more probe
 positions before touching the formula itself.
 
-## Z-order: what has been ruled out at runtime (investigation paused, unresolved)
+## The character/wall z-order bug was an exact Z *tie*, not a wrong formula
 
-A fourth investigation into the reported character/wall z-order bug was paused
-part-way. It did **not** find the bug and did **not** reproduce it, but it did
-close off some theories with runtime evidence rather than reasoning, so future
-sessions should not spend time re-deriving these:
+Resolved on the fourth attempt. Attempts 1-3 kept re-deriving the y_sort
+formula and kept finding it correct — because it **is** correct. Reproducing
+it exactly is what caused the bug: a character standing on a tile gets a
+*bit-identical* Z to that tile's own chunk (measured: player `z=1.01250`,
+tile (9,3) `z=1.01250`). `Transparent2d` is ordered by a **stable** radix sort,
+so an exact tie keeps queue order, and tilemap chunks are queued after sprites
+— the tile drew over the character standing on it, hiding 79% of its pixels
+(only the head stayed visible). The fix is `Z_TIE_BIAS` in `character.rs`; see
+that constant's comment for why its magnitude is safe.
 
-- `ZSORT_DEBUG=1` now also logs `ZSORT_INPUTS`, which reads the `TilemapSize` /
-  `TilemapTileSize` / inherited `GlobalTransform.z` **off the live tilemap
-  entities** — the values `bevy_ecs_tilemap` actually divides by and adds, as
-  opposed to `IsoGrid::y_sort_extent`'s re-derivation from the map asset. On
-  this map they agree (extent `1280`, topmost layer at `z=0`). This is the one
-  input that reading the formula cannot check, so check it first, not last.
-- `bevy_ecs_tilemap` centres a tile's quad **on** the tile's sort anchor
-  (`render/shaders/diamond_iso.wgsl`: `bot_left = center - 0.5 * tile_size`),
-  so 64x64 art on this 64x32 grid extends 32px above *and* below the point its
-  depth is keyed on. The character sprite instead uses `Anchor::BOTTOM_CENTER`,
-  sitting entirely above its own anchor. The two conventions differ; whether
-  that difference is the reported bug was **not** established.
-- `ZSORT_GIZMOS=1` (separate flag, `zsort_debug.rs`) draws each nearby tile's
-  sort anchor as its 64x32 diamond, coloured by the depth relation the renderer
-  will use, so anchor-vs-art alignment can be inspected instead of assumed.
+Note the tie is not a rare coincidence: walking screen-horizontally holds
+`ty - tx` — hence world Y, hence Z — exactly constant, so a character on a
+block row stays tied for the entire traverse.
 
-Two techniques worth reusing:
+The lesson for the next report: when the formula keeps checking out, suspect
+the **boundary** (ties, `<` vs `<=`), not the arithmetic.
 
-- The character's 12 palette colours are **disjoint** from the tileset's 22, so
-  visible-character pixels can be counted exactly by colour-matching a
-  screenshot — a quantitative occlusion measure that removes the eyeballing
-  that earlier attempts relied on. The idle "facing down" frame is 360 opaque
-  px; compare against that for an occlusion fraction.
-- `SCREENSHOT_SEQ_PATH` (+ `SCREENSHOT_SEQ_START` / `SCREENSHOT_SEQ_COUNT`, see
-  `main.rs`) saves consecutive frames instead of one. With the character held
-  still, every frame must be byte-identical; any difference means draw order is
-  *unstable*, not merely wrong. A single screenshot cannot tell those apart,
-  which is a real gap in attempts 1-3. This mode was added but **not yet run**.
+Three techniques that cracked it, all reusable:
+
+- **Palette-disjoint pixel counting.** The character's colours share *zero*
+  values with the tileset's, so visible-character pixels can be counted exactly
+  by colour-matching a screenshot. The idle "facing down" frame is 360 opaque
+  px (357 on screen); anything less is occlusion, measured rather than
+  eyeballed. This is what turned "looks wrong" into "79% hidden".
+- **Predict-then-compare.** Compositing the tile art in the order the geometry
+  dictates and counting the character pixels that survive predicts the real
+  render within ~1px of rounding at every position. Its discriminating power is
+  the point: "tile wins tie" predicted 71px and "character wins tie" 360px
+  against a measured 76px, which identified the tie as the culprit with no
+  ambiguity. Prefer this over reading a busy gizmo overlay.
+- **`SCREENSHOT_SEQ_PATH`** (+ `SCREENSHOT_SEQ_START` / `SCREENSHOT_SEQ_COUNT`,
+  `main.rs`) saves consecutive frames. Held still, every frame must be
+  byte-identical; any difference means draw order is *unstable* rather than
+  merely wrong. Verified stable both before and after the fix, which is what
+  ruled out the flicker theory.
+
+Also confirmed at runtime and not worth re-deriving: `ZSORT_DEBUG=1` logs
+`ZSORT_INPUTS`, reading `TilemapSize` / `TilemapTileSize` / inherited
+`GlobalTransform.z` **off the live tilemap entities** rather than re-deriving
+them from the map asset. They agree with `IsoGrid` (extent `1280`, topmost
+layer at `z=0`). `map.tmx` also has exactly one gid per cell — no stacked or
+composite tiles exist in this map.
 
 ## Maintaining this file
 

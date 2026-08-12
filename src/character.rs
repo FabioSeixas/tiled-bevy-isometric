@@ -24,6 +24,26 @@ const WALK_FRAME_SECS: f32 = 0.12;
 /// always spawns walkable regardless of which shapes are drawn on the map.
 const SPAWN_TILE_POS: Vec2 = Vec2::new(6.0, 14.0);
 
+/// Nudge added to the character's y_sort Z so it wins *exact* ties against
+/// tilemap chunks.
+///
+/// `sync_player_transform` deliberately reproduces `bevy_ecs_tilemap`'s y_sort
+/// key exactly, which means a character standing on a tile gets *bit-identical*
+/// Z to that tile's own chunk (measured: player `z=1.01250`, tile (9,3)
+/// `z=1.01250`). `Transparent2d` is ordered by a **stable** radix sort
+/// (`bevy_core_pipeline`'s `core_2d`), so an exact tie preserves queue order —
+/// and tilemap chunks are queued after sprites, so the tile wins and draws over
+/// the character standing on it. Measured on this map: 79% of the character's
+/// pixels disappeared behind the tile under its own feet, on every tile of a
+/// raised block, and along any screen-horizontal walk (which holds `ty - tx`,
+/// hence world Y, hence Z, exactly constant).
+///
+/// One screen row is `grid.y / y_sort_extent` of Z (0.025 here: 32px / 1280),
+/// and f32 resolves ~1.2e-7 near Z=1, so a 1e-3 bias is far too small to
+/// reorder the character against a genuinely different row and far too large to
+/// be lost to rounding: it changes the outcome for exact ties only.
+const Z_TIE_BIAS: f32 = 1e-3;
+
 /// Which row of `isometric_char_1.png`'s 4x4 atlas faces which screen
 /// direction. Confirmed by inspecting the sheet (see `assets/isometric_char_1.aseprite`,
 /// which has no frame-tag metadata to go by — it's a single flat frame):
@@ -250,12 +270,15 @@ pub(crate) fn try_move(
 /// `-(layer_count - 1) * offset` up to exactly `0` for the last one). A fixed
 /// Z can't interleave with a Y-sorted layer as the character crosses rows;
 /// this keeps it correctly sorted against every wall tile regardless of row.
+///
+/// `Z_TIE_BIAS` is then added so the character wins *exact* ties — see that
+/// constant's comment for why the formula alone isn't enough.
 pub(crate) fn sync_player_transform(grid: Res<IsoGrid>, mut query: Query<(&Player, &mut Transform)>) {
     for (player, mut transform) in &mut query {
         let world = tile_to_world(player.tile_pos, &grid.grid, grid.offset);
         transform.translation.x = world.x;
         transform.translation.y = world.y;
-        transform.translation.z = 1.0 - world.y / grid.y_sort_extent;
+        transform.translation.z = 1.0 - world.y / grid.y_sort_extent + Z_TIE_BIAS;
     }
 }
 
@@ -271,4 +294,43 @@ fn follow_player(
     };
     camera_transform.translation.x = player_transform.translation.x;
     camera_transform.translation.y = player_transform.translation.y;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Z_TIE_BIAS` exists to break exact ties and nothing more. It must stay
+    /// strictly inside the gap between two adjacent screen rows' sort keys,
+    /// or the character would start winning against tiles that are genuinely
+    /// one row in front of it — trading this bug for a worse one. It must also
+    /// stay well clear of f32's resolution near Z=1, or it would round away
+    /// and stop breaking the tie at all.
+    #[test]
+    fn z_tie_bias_breaks_ties_without_crossing_a_row() {
+        // This map: 20 tiles tall, 64px tiles => extent 1280; rows are 32px apart.
+        let y_sort_extent = 20.0 * 64.0_f32;
+        let row_step = 32.0 / y_sort_extent;
+
+        assert!(
+            Z_TIE_BIAS < row_step,
+            "bias {Z_TIE_BIAS} must be smaller than one row's Z step {row_step}"
+        );
+        assert!(
+            Z_TIE_BIAS > f32::EPSILON * 8.0,
+            "bias {Z_TIE_BIAS} must survive f32 rounding near Z=1"
+        );
+
+        // A tie must break in the character's favour...
+        let tile_z = 1.0 - (-16.0 / y_sort_extent);
+        let player_z = 1.0 - (-16.0 / y_sort_extent) + Z_TIE_BIAS;
+        assert!(player_z > tile_z, "character must win an exact tie");
+
+        // ...but the tile one row in front must still occlude the character.
+        let row_in_front_z = 1.0 - (-48.0 / y_sort_extent);
+        assert!(
+            row_in_front_z > player_z,
+            "a tile one row in front must still sort above the character"
+        );
+    }
 }
