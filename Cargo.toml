@@ -1,0 +1,8 @@
+[package]
+name = "tiled_bevy_isometric"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18"
+bevy_ecs_tiled = "0.12.0"
