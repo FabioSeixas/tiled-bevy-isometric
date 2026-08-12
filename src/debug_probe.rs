@@ -74,13 +74,28 @@ fn run_key_simulation(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut frame: Local<u32>,
     mut start: Local<Option<(Vec2, Vec3)>>,
+    mut started_pos: Local<bool>,
     mut commands: Commands,
-    query: Query<(&Player, &Transform)>,
+    mut query: Query<(&mut Player, &Transform)>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Ok((player, transform)) = query.single() else {
+    let Ok((mut player, transform)) = query.single_mut() else {
         return;
     };
+
+    // Optional override so the simulation can start right next to a wall
+    // corner instead of always at the open-ground spawn point.
+    if !*started_pos {
+        if let Ok(s) = std::env::var("SIM_START") {
+            let mut parts = s.split(',');
+            if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
+                if let (Ok(x), Ok(y)) = (x.trim().parse::<f32>(), y.trim().parse::<f32>()) {
+                    player.tile_pos = Vec2::new(x, y);
+                }
+            }
+        }
+        *started_pos = true;
+    }
 
     let warmup_frames: u32 = std::env::var("SIM_WARMUP_FRAMES")
         .ok()

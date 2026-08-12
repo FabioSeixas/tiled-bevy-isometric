@@ -81,6 +81,28 @@ part. If movement ever looks diagonal again, this is the first thing to
 check; `iso.rs`'s unit test asserts the inverse round-trips for all four
 cardinal screen directions.
 
+## Collision must be resolved per screen axis, not per tile axis
+
+`move_player` used to split the tile-space movement delta into its own x and
+y components and `try_move` each separately, to let the character slide along
+a collision edge instead of stopping dead. But tile-space axes are diagonal
+on screen (see above), so a *single* screen-space cardinal key (e.g. only
+`ArrowUp`, no sideways key at all) produces a tile-space delta with nonzero
+components on *both* tile axes. Splitting on tile axes meant that if only one
+of those two tile-space sub-steps got blocked near a wall, the character
+visibly slid sideways even though no sideways key was ever pressed — verified
+with `SIM_KEYS=ArrowUp` at a wall corner (`SIM_START=11.5,9.0`): the reported
+`world_delta.x` was `~15px` when it must be exactly `0` for a straight-up
+press. The fix splits on *screen*-space axes instead — one sub-step for
+`screen_input.x` alone, one for `screen_input.y` alone, each converted
+through `screen_dir_to_tile_dir` independently before being tried — so a
+cardinal key can now only ever move (or fully stop) along the direction it
+represents, never leak into the other screen axis. `anim.facing` is then
+picked from whichever screen axis actually resulted in movement, not the raw
+key intent, so a diagonal press that's fully blocked on one axis doesn't show
+a facing that disagrees with the direction the character actually slid.
+`try_move` now returns whether it moved, for exactly this reason.
+
 ## Tall tile art needs `y_sort` with 1-tile render chunks, not just `y_sort`
 
 `assets/experiment.tsx` tiles are 64x64 against this map's 64x32 grid

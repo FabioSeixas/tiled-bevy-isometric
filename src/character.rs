@@ -171,15 +171,38 @@ fn move_player(
         return;
     }
     anim.moving = true;
-    anim.facing = FacingDirection::from_screen_input(screen_input);
 
-    let input = screen_dir_to_tile_dir(screen_input, &grid.grid);
-    let delta = input.normalize() * MOVE_SPEED_TILES_PER_SEC * time.delta_secs();
+    let tile_dir = screen_dir_to_tile_dir(screen_input, &grid.grid);
+    // Same overall tile-space speed as before: `tile_dir` is scaled so its
+    // length matches a full step, then that same scale is applied below to
+    // each screen-axis sub-step (screen_dir_to_tile_dir is linear, so the two
+    // sub-steps sum to exactly this vector when both succeed).
+    let scale = MOVE_SPEED_TILES_PER_SEC * time.delta_secs() / tile_dir.length();
 
-    // Resolve each axis independently so the character slides along a
-    // collision edge instead of stopping dead when only one axis is blocked.
-    try_move(&mut player.tile_pos, Vec2::new(delta.x, 0.0), &grid, &polygons);
-    try_move(&mut player.tile_pos, Vec2::new(0.0, delta.y), &grid, &polygons);
+    // Resolve each *screen*-space axis independently, not each tile-space
+    // axis — tile-space axes are diagonal on screen (see `iso.rs`), so
+    // splitting on them let a single cardinal key (e.g. only "Up") produce a
+    // tile-space sub-step with a nonzero sideways component, which could
+    // slide the character sideways when only part of it was blocked even
+    // though no sideways key was ever pressed. Splitting on screen axes means
+    // a step only ever moves along a direction the player actually pressed.
+    let step_x = screen_dir_to_tile_dir(Vec2::new(screen_input.x, 0.0), &grid.grid) * scale;
+    let step_y = screen_dir_to_tile_dir(Vec2::new(0.0, screen_input.y), &grid.grid) * scale;
+
+    let moved_x = try_move(&mut player.tile_pos, step_x, &grid, &polygons);
+    let moved_y = try_move(&mut player.tile_pos, step_y, &grid, &polygons);
+
+    // Face whichever screen-axis intent actually resulted in movement, not
+    // just the raw key intent — otherwise a diagonal press that's fully
+    // blocked on one axis shows a facing that disagrees with the direction
+    // the character actually slid.
+    let effective_screen = Vec2::new(
+        if moved_x { screen_input.x } else { 0.0 },
+        if moved_y { screen_input.y } else { 0.0 },
+    );
+    if effective_screen != Vec2::ZERO {
+        anim.facing = FacingDirection::from_screen_input(effective_screen);
+    }
 }
 
 /// Cycles the walk-cycle column while `moving` (set by `move_player`), holds
@@ -202,15 +225,19 @@ fn animate_player(time: Res<Time>, mut query: Query<(&mut PlayerAnimation, &mut 
     }
 }
 
+/// Returns whether the move actually happened (i.e. wasn't blocked).
 pub(crate) fn try_move(
     tile_pos: &mut Vec2,
     delta: Vec2,
     grid: &IsoGrid,
     polygons: &TileCollisionPolygons,
-) {
+) -> bool {
     let candidate = *tile_pos + delta;
-    if !is_point_blocked(tile_to_world(candidate, &grid.grid, grid.offset), polygons) {
+    if is_point_blocked(tile_to_world(candidate, &grid.grid, grid.offset), polygons) {
+        false
+    } else {
         *tile_pos = candidate;
+        true
     }
 }
 
