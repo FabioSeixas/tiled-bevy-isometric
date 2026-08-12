@@ -2,6 +2,7 @@ mod character;
 mod collision;
 mod debug_probe;
 mod iso;
+mod zsort_debug;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -11,6 +12,7 @@ use character::CharacterPlugin;
 use collision::CollisionPlugin;
 use debug_probe::ProbePlugin;
 use iso::IsoPlugin;
+use zsort_debug::ZsortDebugPlugin;
 
 fn main() {
     let mut app = App::new();
@@ -20,6 +22,11 @@ fn main() {
         // Pulls in bevy_ecs_tilemap::TilemapPlugin automatically.
         .add_plugins(TiledPlugin::default())
         .add_plugins((CollisionPlugin, IsoPlugin, CharacterPlugin, ProbePlugin))
+        .add_plugins(ZsortDebugPlugin)
+        .add_systems(
+            Update,
+            zsort_debug::zsort_debug_update.after(character::sync_player_transform),
+        )
         .add_systems(Startup, setup);
 
     // Debug-only: set SCREENSHOT_PATH to capture one frame and exit, for

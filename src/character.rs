@@ -250,7 +250,7 @@ pub(crate) fn try_move(
 /// `-(layer_count - 1) * offset` up to exactly `0` for the last one). A fixed
 /// Z can't interleave with a Y-sorted layer as the character crosses rows;
 /// this keeps it correctly sorted against every wall tile regardless of row.
-fn sync_player_transform(grid: Res<IsoGrid>, mut query: Query<(&Player, &mut Transform)>) {
+pub(crate) fn sync_player_transform(grid: Res<IsoGrid>, mut query: Query<(&Player, &mut Transform)>) {
     for (player, mut transform) in &mut query {
         let world = tile_to_world(player.tile_pos, &grid.grid, grid.offset);
         transform.translation.x = world.x;

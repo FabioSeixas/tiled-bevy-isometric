@@ -148,6 +148,24 @@ convention) — reading coordinates straight off the TMX XML and using them
 as-is (e.g. to pick a test position near a specific wall cluster) silently
 points at the wrong row. Flip with `ty = map_height - 1 - csv_row` first.
 
+## If the character/wall z-order bug is reported again, instrument first
+
+Two prior investigations, plus a third that added live instrumentation
+(`src/zsort_debug.rs`, disabled by default — set `ZSORT_DEBUG=1`), have each
+independently re-derived and confirmed the y_sort formula in "Sprites need a
+Z that follows `y_sort`" is correct, and that this crate's own `tile_to_world`
+never drifts from `bevy_ecs_tiled`'s authoritative `tile_relative_position`
+(checked per-tile, not just at the origin). Do not re-derive the formula a
+fourth time from reasoning alone — enable `ZSORT_DEBUG` and combine it with
+`src/debug_probe.rs`'s `PROBE_START`/`PROBE_STEP="0,0"`/`PROBE_SCREENSHOT_PATH`
+to plant the character at an exact tile and get a screenshot with both the
+render and the live-computed Z values for the character and its nearest wall
+tiles burned into the same image, so a fresh report can be checked against
+real numbers instead of debated on paper. If the numbers and the render still
+disagree after that, the bug is somewhere this loop hasn't checked yet (e.g.
+a specific map region/tile shape not yet probed) — narrow it with more probe
+positions before touching the formula itself.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
