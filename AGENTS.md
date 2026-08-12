@@ -35,6 +35,35 @@ commands.spawn(Screenshot::primary_window())
 
 This is an environment quirk, not a bug in the app or the dependency stack.
 
+## Collision is hand-rolled from Tiled data, not a physics engine
+
+`src/collision.rs` reads each placed tile's Tile Collision Editor
+`<objectgroup>` polygon straight from `TiledMapAsset.map` (via
+`bevy_ecs_tiled`'s core API, never its `physics` feature — no Avian/Rapier
+dependency exists in this repo, deliberately) and converts it to a world-space
+polygon once per `TiledEvent<MapCreated>`. `src/character.rs` does a plain
+point-in-polygon check against the character's position every frame; no
+collider shapes are spawned as entities.
+
+Tile-space-to-world-space conversion (`src/iso.rs::tile_to_world`) must
+include the same `TilemapAnchor` offset that `tile_relative_position` (used
+to place the collision polygons) already bakes in — `bevy_ecs_tilemap`'s raw
+diamond-grid formula alone puts tile `(0,0)` at world origin, but an anchored
+map (this repo uses `TilemapAnchor::Center`) doesn't. `IsoGrid` computes and
+caches that offset once, from the map's own `tile_relative_position` at tile
+`(0,0)`, when the map loads. Getting this wrong doesn't error — it silently
+moves the character out of sync with the collision polygons, so collisions
+either never trigger or trigger in the wrong place. If collision seems off
+after touching this math, re-derive the offset rather than guessing at it.
+
+To verify a hand-drawn shape actually took effect (new tile, edited polygon),
+don't rely on eyeballing gameplay — use the scripted probe in
+`src/debug_probe.rs` (env vars documented in its header comment). It runs the
+exact same `try_move`/`is_point_blocked` path as real movement, either
+stepping the character through tile-space or testing one exact world point,
+and can save a screenshot at the end. `cargo run` also still logs `Built N
+tile collision polygon(s) from Tiled data` on map load as a quick sanity count.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

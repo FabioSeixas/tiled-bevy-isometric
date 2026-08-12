@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <tileset version="1.10" tiledversion="1.12.2" name="experiment" tilewidth="64" tileheight="64" tilecount="126" columns="9">
- <image source="experiment.aseprite" width="633" height="919"/>
+ <image source="experiment.png" width="633" height="919"/>
  <tile id="0">
   <objectgroup draworder="index" id="2">
    <object id="1" x="14.125" y="54.125">
