@@ -1,0 +1,107 @@
+//! Fractional-position isometric projection, mirroring the diamond-grid math
+//! `bevy_ecs_tilemap` uses internally to place tiles (see
+//! `bevy_ecs_tilemap::helpers::square_grid::diamond::DiamondPos::project`),
+//! but usable with continuous (non-integer) tile coordinates for smooth
+//! character movement.
+
+use bevy::prelude::*;
+use bevy_ecs_tiled::prelude::*;
+
+/// Grid size and anchor offset of the currently loaded map. Defaults to
+/// `assets/map.tmx`'s grid size with no offset, so the character can be
+/// positioned before the map asset finishes loading; both fields are
+/// overwritten once `TiledEvent<MapCreated>` fires.
+///
+/// The offset makes `tile_to_world` agree with `bevy_ecs_tiled`'s own
+/// `tile_relative_position` (used for collision polygons in `collision.rs`):
+/// it's the world position of tile (0,0) under our map's `TilemapAnchor`,
+/// i.e. exactly the correction the raw diamond-grid formula is missing.
+#[derive(Resource)]
+pub struct IsoGrid {
+    pub grid: TilemapGridSize,
+    pub offset: Vec2,
+    /// `map height in tiles * tallest tile's pixel height`, i.e. the same
+    /// `map_size.y * tile_size.y` denominator `bevy_ecs_tilemap`'s `y_sort`
+    /// divides world Y by (see `render/material.rs` in that crate) to build
+    /// its per-chunk sort key. Anything drawn at this crate's `y_sort`
+    /// convention (the character sprite, in `character.rs`) must divide by
+    /// the same value or its depth won't line up with the tilemap's.
+    pub y_sort_extent: f32,
+}
+
+impl Default for IsoGrid {
+    fn default() -> Self {
+        Self {
+            grid: TilemapGridSize { x: 64.0, y: 32.0 },
+            offset: Vec2::ZERO,
+            y_sort_extent: 1.0,
+        }
+    }
+}
+
+pub struct IsoPlugin;
+
+impl Plugin for IsoPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<IsoGrid>()
+            .add_systems(Update, update_iso_grid);
+    }
+}
+
+pub(crate) fn update_iso_grid(
+    mut events: MessageReader<TiledEvent<MapCreated>>,
+    map_assets: Res<Assets<TiledMapAsset>>,
+    mut grid: ResMut<IsoGrid>,
+) {
+    for event in events.read() {
+        let Some(map_asset) = event.get_map_asset(&map_assets) else {
+            continue;
+        };
+        grid.grid = grid_size_from_map(&map_asset.map);
+        grid.offset = map_asset.tile_relative_position(
+            &TilePos { x: 0, y: 0 },
+            &map_asset.largest_tile_size,
+            &crate::collision::MAP_ANCHOR,
+        );
+        grid.y_sort_extent = map_asset.map.height as f32 * map_asset.largest_tile_size.y;
+    }
+}
+
+/// Projects a fractional tile-space coordinate into world space.
+pub fn tile_to_world(tile: Vec2, grid: &TilemapGridSize, offset: Vec2) -> Vec2 {
+    Vec2::new(
+        grid.x * 0.5 * (tile.x + tile.y),
+        grid.y * 0.5 * (tile.y - tile.x),
+    ) + offset
+}
+
+/// Converts an on-screen direction (e.g. "up" = `Vec2::Y`) into the
+/// tile-space direction that, once run through `tile_to_world`, moves along
+/// that screen direction. This is `tile_to_world`'s linear part inverted
+/// (the constant `offset` doesn't matter for a direction, only a position).
+///
+/// Tile-space axes are diagonal on screen (see `tile_to_world`), so this is
+/// not the identity: keyboard input meant to feel like screen-space up/down/
+/// left/right must go through this before being treated as a tile delta.
+pub fn screen_dir_to_tile_dir(dir: Vec2, grid: &TilemapGridSize) -> Vec2 {
+    Vec2::new(dir.x / grid.x - dir.y / grid.y, dir.x / grid.x + dir.y / grid.y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_dir_to_tile_dir_inverts_tile_to_world() {
+        let grid = TilemapGridSize { x: 64.0, y: 32.0 };
+        for screen_dir in [Vec2::Y, Vec2::NEG_Y, Vec2::X, Vec2::NEG_X] {
+            let tile_dir = screen_dir_to_tile_dir(screen_dir, &grid);
+            let world_dir = tile_to_world(tile_dir, &grid, Vec2::ZERO);
+            let normalized = world_dir.normalize();
+            assert!(
+                normalized.distance(screen_dir) < 1e-4,
+                "screen_dir {screen_dir:?} -> tile_dir {tile_dir:?} -> world_dir {world_dir:?}, normalized {normalized:?}"
+            );
+        }
+    }
+}

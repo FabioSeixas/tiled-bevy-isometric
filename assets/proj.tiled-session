@@ -1,0 +1,22 @@
+{
+    "activeFile": "",
+    "expandedProjectPaths": [
+    ],
+    "fileStates": {
+    },
+    "last.imagePath": "/home/fabioseixas/projects/learn/rust/bevy/tiled-bevy-isometric/assets",
+    "last.objectTemplatePath": "/home/fabioseixas/projects/learn/rust/bevy/tiled-bevy-isometric/assets",
+    "map.lastUsedFormat": "tmx",
+    "map.orientation": "2",
+    "map.tileWidth": 64,
+    "openFiles": [
+    ],
+    "project": "proj.tiled-project",
+    "recentFiles": [
+    ],
+    "tileset.lastUsedFormat": "tsx",
+    "tileset.tileSize": {
+        "height": 64,
+        "width": 64
+    }
+}
