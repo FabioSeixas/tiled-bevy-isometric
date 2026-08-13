@@ -268,6 +268,31 @@ frames before the screenshot, so you can capture the character settled into
 its *idle* pose facing a given direction (not just mid-stride) — used to
 verify all 8 idle and 8 running poses for the sprite swap above.
 
+## Wall tile collision bleeds into one neighboring row/column — a tileset artifact
+
+`assets/experiment.tsx`'s tileset header declares `tilewidth="64"
+tileheight="64"` (the tile art's native size), but the map itself uses
+`tileheight="32"` (half that) as its grid pitch. `bevy_ecs_tiled::tiled::
+helpers::tile_size()` returns the tileset's native 64x64 size, not the map's
+32px row pitch, and `collision.rs::build_collision_polygons` uses that
+oversized size to compute each tile's `bbox_min`/`bbox_max`. The practical
+effect: a wall tile's collision polygon (GID92, reusing `box_collision.tx`)
+extends about one extra row/column beyond its own footprint, asymmetrically —
+confirmed empirically (via `SUBTILE_DEBUG=1` and `debug_probe.rs` probes) that
+a wall *row* `R` also blocks part of row `R-1`, and a wall *column* `C` also
+blocks part of column `C+1` (never the opposite neighbor). This reproduces
+against the original pre-existing wall block too, so it's an inherent
+property of the shared wall tile/template, not something introduced by any
+one map edit.
+
+When placing new wall tiles (e.g. a building footprint), leave a spare
+row above a north wall and a spare column to the left of an east-most wall
+if that neighboring space needs to be reliably walkable, or accept it as a
+contaminated buffer tile if it doesn't. A door gap cut into a wall run stays
+clean as long as the door tile itself carries no collision polygon and isn't
+directly adjacent (in the bleed direction) to another wall tile in the same
+run.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
