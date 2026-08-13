@@ -13,12 +13,30 @@ pub struct Player {
 }
 
 const MOVE_SPEED_TILES_PER_SEC: f32 = 3.0;
-const SPRITE_FRAME_SIZE: UVec2 = UVec2::new(32, 48);
-const SPRITE_COLUMNS: u32 = 4;
-const SPRITE_ROWS: u32 = 4;
-/// Seconds per walk-cycle frame while moving (~8 frames/sec — readable at
-/// this sprite's small on-screen size without looking frantic).
-const WALK_FRAME_SECS: f32 = 0.12;
+
+/// Both `isometric_character_idle.png` (512x512) and
+/// `isometric_character_run.png` (384x512) use this frame size, confirmed by
+/// slicing each sheet into a 64x64 grid and visually inspecting every cell:
+/// each cell holds exactly one clean, non-clipped pose (no straddling or
+/// cropping), and it evenly divides both sheets' dimensions (idle: 8x8,
+/// run: 6x8).
+const FRAME_SIZE: UVec2 = UVec2::new(64, 64);
+const IDLE_COLUMNS: u32 = 8;
+const IDLE_ROWS: u32 = 8;
+const RUN_COLUMNS: u32 = 6;
+const RUN_ROWS: u32 = 8;
+
+/// Seconds per run-cycle frame while moving (~8 frames/sec — same cadence
+/// `WALK_FRAME_SECS` used before this sheet swap, still readable at this
+/// sprite's small on-screen size without looking frantic).
+const RUN_FRAME_SECS: f32 = 0.12;
+/// Seconds per idle frame. The idle sheet's 8 columns aren't a walk-style
+/// cycle — pixel-diffing every column against column 0 shows columns 0-1 are
+/// byte-identical and columns 2-7 are a second, different-but-mutually-
+/// identical pose (a small breathing shift, not a walk cycle), so this runs
+/// much slower than the run cycle to read as an idle breathing loop rather
+/// than a flicker.
+const IDLE_FRAME_SECS: f32 = 0.5;
 
 /// Open ground away from every placed collidable tile, so the character
 /// always spawns walkable regardless of which shapes are drawn on the map.
@@ -44,67 +62,108 @@ const SPAWN_TILE_POS: Vec2 = Vec2::new(6.0, 14.0);
 /// be lost to rounding: it changes the outcome for exact ties only.
 const Z_TIE_BIAS: f32 = 1e-3;
 
-/// Which row of `isometric_char_1.png`'s 4x4 atlas faces which screen
-/// direction. Confirmed by inspecting the sheet (see `assets/isometric_char_1.aseprite`,
-/// which has no frame-tag metadata to go by — it's a single flat frame):
-/// row 0 is a side profile facing screen-right, row 2 the same profile
-/// mirrored, facing screen-left — confirmed pixel-exactly by checking that
-/// the head's skin-tone pixels sit right-of-center in row 0's hair silhouette
-/// and left-of-center in row 2's (the two look deceptively similar to the
-/// naked eye at this sprite's small size). Rows 1 and 3 both show mostly the
-/// back of the head with only a sliver of face, consistent with facing away
-/// from the camera; row 1's sliver leans right and row 3's leans left, and
-/// row 3 shows roughly twice row 1's visible-face pixel count, so row 1 is
-/// "facing up" (walking away, almost no face) and row 3 is "facing down"
-/// (walking toward camera, marginally more face) — the closest approximation
-/// available, since no frame in this sheet is a true front-on toward-camera
-/// pose. Each row's 4 columns are a walk cycle; column 0 doubles as the idle
-/// frame in every row.
+/// Which row of `isometric_character_idle.png`/`isometric_character_run.png`
+/// (both share the same 8-row layout) faces which compass direction. Neither
+/// sheet carries frame-tag metadata, so this was determined by slicing both
+/// sheets into their 64x64 cells and visually/pixel-diffing every row:
+///
+/// - Row-pair mirroring: diffing each row against every other row *flipped
+///   horizontally* found exact byte-for-byte matches (mean diff 0.000) for
+///   (row1,row2), (row3,row7) and (row4,row6) on both sheets — confirming
+///   those are mirrored left/right pairs of the same pose, and leaving row0
+///   and row5 as the only unmirrored (front/back) rows.
+/// - Front/back split: row0 is a symmetric, face-forward standing/running
+///   pose (least self-shadow of any row); row5 is a symmetric pose with only
+///   the back of the head visible, no face (most self-shadow) — so row0 is
+///   Down (toward camera) and row5 is Up (away from camera).
+/// - Down family vs. up family: rows 1 and 2 still show a visible face; rows
+///   4 and 6 show only hood/hair with no face, matching row5's back-facing
+///   look. So (row1,row2) are the two "Down" diagonals and (row4,row6) are
+///   the two "Up" diagonals.
+/// - Left vs. right within each pair: the idle sheet's self-shadow tone
+///   turned out to be a fixed-light-source artifact (row0 and row5 — neither
+///   mirrored, both unambiguous — are *both* slightly more shadowed on
+///   screen-right), not a facing cue, so it was discarded as unreliable.
+///   Instead, the run sheet's kinematics settle it unambiguously: across
+///   every column of row3, the character's whole body leans and sprints
+///   toward screen-left (head top-left, trailing leg kicked out to the
+///   right) — a pure left profile — and row7 is the exact mirror, sprinting
+///   right. Applying the same "which way is the trailing leg / lean facing"
+///   read to the diagonal pairs: row1's trailing leg kicks left (facing
+///   right) so row1 is Down-Right and row2 is Down-Left; row4 leans/sprints
+///   left like row3 (Up-Left) and row6 mirrors it (Up-Right).
+///
+/// Final row order: 0 Down, 1 Down-Right, 2 Down-Left, 3 Left, 4 Up-Left,
+/// 5 Up, 6 Up-Right, 7 Right.
 #[derive(Clone, Copy, PartialEq, Default)]
 enum FacingDirection {
-    Right,
-    Up,
-    Left,
     #[default]
     Down,
+    DownRight,
+    DownLeft,
+    Left,
+    UpLeft,
+    Up,
+    UpRight,
+    Right,
 }
 
 impl FacingDirection {
     fn row(self) -> u32 {
         match self {
-            FacingDirection::Right => 0,
-            FacingDirection::Up => 1,
-            FacingDirection::Left => 2,
-            FacingDirection::Down => 3,
+            FacingDirection::Down => 0,
+            FacingDirection::DownRight => 1,
+            FacingDirection::DownLeft => 2,
+            FacingDirection::Left => 3,
+            FacingDirection::UpLeft => 4,
+            FacingDirection::Up => 5,
+            FacingDirection::UpRight => 6,
+            FacingDirection::Right => 7,
         }
     }
 
-    /// Picks a facing direction from screen-space movement input, using
-    /// whichever axis has the larger magnitude (so a diagonal key combo like
-    /// W+D still resolves to a single unambiguous facing).
+    /// Buckets screen-space movement input into 8 compass directions by
+    /// angle, replacing the old 4-direction "larger axis wins" comparison
+    /// (which could structurally never produce a diagonal). Sector 0 is
+    /// centered on screen-right and sectors advance counter-clockwise in
+    /// 45-degree steps, matching `atan2`'s convention.
     fn from_screen_input(input: Vec2) -> Self {
-        if input.x.abs() >= input.y.abs() {
-            if input.x >= 0.0 {
-                FacingDirection::Right
-            } else {
-                FacingDirection::Left
-            }
-        } else if input.y > 0.0 {
-            FacingDirection::Up
-        } else {
-            FacingDirection::Down
+        let angle = input.y.atan2(input.x);
+        let sector = (angle / (std::f32::consts::TAU / 8.0)).round() as i32;
+        match sector.rem_euclid(8) {
+            0 => FacingDirection::Right,
+            1 => FacingDirection::UpRight,
+            2 => FacingDirection::Up,
+            3 => FacingDirection::UpLeft,
+            4 => FacingDirection::Left,
+            5 => FacingDirection::DownLeft,
+            6 => FacingDirection::Down,
+            7 => FacingDirection::DownRight,
+            _ => unreachable!("rem_euclid(8) is always in 0..8"),
         }
     }
 }
 
-/// Walk-cycle animation state, driven by `move_player` (which sets `facing`
-/// and `moving`) and applied to the sprite's atlas index by `animate_player`.
-#[derive(Component, Default)]
+/// Animation state, driven by `move_player` (which sets `facing` and
+/// `moving`) and applied to the sprite's image/atlas by `animate_player`.
+/// Idle and run are separate sheets (not columns of one shared atlas), so
+/// both the image and the atlas layout must be swapped together based on
+/// `moving`, not just the atlas index within a single layout.
+#[derive(Component)]
 struct PlayerAnimation {
     facing: FacingDirection,
     moving: bool,
+    /// Tracks the previous frame's `moving` so a transition between idle and
+    /// running can reset `frame` and both timers instead of carrying over an
+    /// index/timer progress from the other sheet's cycle.
+    was_moving: bool,
     frame: u32,
-    timer: Timer,
+    idle_timer: Timer,
+    run_timer: Timer,
+    idle_image: Handle<Image>,
+    run_image: Handle<Image>,
+    idle_layout: Handle<TextureAtlasLayout>,
+    run_layout: Handle<TextureAtlasLayout>,
 }
 
 pub struct CharacterPlugin;
@@ -129,11 +188,19 @@ fn spawn_player(
     asset_server: Res<AssetServer>,
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    let image = asset_server.load("isometric_char_1.png");
-    let layout = layouts.add(TextureAtlasLayout::from_grid(
-        SPRITE_FRAME_SIZE,
-        SPRITE_COLUMNS,
-        SPRITE_ROWS,
+    let idle_image = asset_server.load("isometric_character_idle.png");
+    let run_image = asset_server.load("isometric_character_run.png");
+    let idle_layout = layouts.add(TextureAtlasLayout::from_grid(
+        FRAME_SIZE,
+        IDLE_COLUMNS,
+        IDLE_ROWS,
+        None,
+        None,
+    ));
+    let run_layout = layouts.add(TextureAtlasLayout::from_grid(
+        FRAME_SIZE,
+        RUN_COLUMNS,
+        RUN_ROWS,
         None,
         None,
     ));
@@ -143,14 +210,22 @@ fn spawn_player(
             tile_pos: SPAWN_TILE_POS,
         },
         PlayerAnimation {
-            timer: Timer::from_seconds(WALK_FRAME_SECS, TimerMode::Repeating),
-            ..default()
+            facing: FacingDirection::default(),
+            moving: false,
+            was_moving: false,
+            frame: 0,
+            idle_timer: Timer::from_seconds(IDLE_FRAME_SECS, TimerMode::Repeating),
+            run_timer: Timer::from_seconds(RUN_FRAME_SECS, TimerMode::Repeating),
+            idle_image: idle_image.clone(),
+            run_image,
+            idle_layout: idle_layout.clone(),
+            run_layout,
         },
         Sprite::from_atlas_image(
-            image,
+            idle_image,
             TextureAtlas {
-                layout,
-                index: (FacingDirection::default().row() * SPRITE_COLUMNS) as usize,
+                layout: idle_layout,
+                index: (FacingDirection::default().row() * IDLE_COLUMNS) as usize,
             },
         ),
         Anchor::BOTTOM_CENTER,
@@ -225,22 +300,43 @@ fn move_player(
     }
 }
 
-/// Cycles the walk-cycle column while `moving` (set by `move_player`), holds
-/// column 0 as the idle frame otherwise, and picks the row from `facing`.
+/// Cycles the run-cycle column while `moving` (set by `move_player`), cycles
+/// the idle sheet's columns otherwise, and picks the row from `facing`.
+/// Swaps both the sprite's image and its atlas layout on every idle/run
+/// transition, since the two states are separate sheets, not columns of one
+/// shared atlas.
 fn animate_player(time: Res<Time>, mut query: Query<(&mut PlayerAnimation, &mut Sprite)>) {
     for (mut anim, mut sprite) in &mut query {
-        if anim.moving {
-            anim.timer.tick(time.delta());
-            if anim.timer.just_finished() {
-                anim.frame = (anim.frame + 1) % SPRITE_COLUMNS;
-            }
-        } else {
-            anim.timer.reset();
+        if anim.moving != anim.was_moving {
             anim.frame = 0;
+            anim.idle_timer.reset();
+            anim.run_timer.reset();
+            anim.was_moving = anim.moving;
         }
 
+        let frame_count = if anim.moving { RUN_COLUMNS } else { IDLE_COLUMNS };
+        let timer = if anim.moving {
+            &mut anim.run_timer
+        } else {
+            &mut anim.idle_timer
+        };
+        timer.tick(time.delta());
+        if timer.just_finished() {
+            anim.frame = (anim.frame + 1) % frame_count;
+        }
+
+        sprite.image = if anim.moving {
+            anim.run_image.clone()
+        } else {
+            anim.idle_image.clone()
+        };
         if let Some(atlas) = sprite.texture_atlas.as_mut() {
-            atlas.index = (anim.facing.row() * SPRITE_COLUMNS + anim.frame) as usize;
+            atlas.layout = if anim.moving {
+                anim.run_layout.clone()
+            } else {
+                anim.idle_layout.clone()
+            };
+            atlas.index = (anim.facing.row() * frame_count + anim.frame) as usize;
         }
     }
 }

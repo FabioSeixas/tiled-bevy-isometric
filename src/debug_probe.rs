@@ -18,6 +18,10 @@
 //! player, instead of bypassing it like the tile-step probe above does.
 //! - `SIM_KEYS` = comma-separated `KeyCode` names, e.g. "ArrowUp" or "ArrowUp,ArrowRight"
 //! - `SIM_FRAMES` = frame count to hold the keys before reporting (default 60)
+//! - `SIM_IDLE_FRAMES` = optional frame count to keep holding *after* releasing
+//!   the keys (default 0, i.e. the screenshot is taken while still moving).
+//!   Set this to capture the character settled into its idle pose facing
+//!   whatever direction `SIM_KEYS` last moved it, instead of mid-stride.
 //! - `SIM_SCREENSHOT_PATH` = optional path to save a screenshot on the last frame
 
 use bevy::prelude::*;
@@ -116,17 +120,29 @@ fn run_key_simulation(
         .split(',')
         .filter_map(key_code_from_name)
         .collect();
-    for key in &keys {
-        keyboard.press(*key);
-    }
 
-    let total_frames: u32 = std::env::var("SIM_FRAMES")
+    let hold_frames: u32 = std::env::var("SIM_FRAMES")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
+    let idle_frames: u32 = std::env::var("SIM_IDLE_FRAMES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let elapsed = *frame - warmup_frames;
 
-    if elapsed == total_frames {
+    if elapsed <= hold_frames {
+        for key in &keys {
+            keyboard.press(*key);
+        }
+    } else {
+        for key in &keys {
+            keyboard.release(*key);
+        }
+    }
+
+    let screenshot_frame = hold_frames + idle_frames;
+    if elapsed == screenshot_frame {
         let (start_tile, start_world) = start.unwrap();
         let tile_delta = player.tile_pos - start_tile;
         let world_delta = transform.translation - start_world;
@@ -139,7 +155,7 @@ fn run_key_simulation(
                 .spawn(Screenshot::primary_window())
                 .observe(save_to_disk(path));
         }
-    } else if elapsed == total_frames + 5 {
+    } else if elapsed == screenshot_frame + 5 {
         exit.write(AppExit::Success);
     }
 }

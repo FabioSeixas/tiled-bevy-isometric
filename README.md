@@ -12,23 +12,27 @@ cargo run
 ```
 
 This opens a window, loads the real `assets/map.tmx` isometric map (tileset
-`assets/experiment.tsx`), and spawns a controllable character
-(`assets/isometric_char_1.png`). Move with WASD or arrow keys. Movement is
-blocked by each tile's hand-drawn Tile Collision Editor shape, not a full-tile
-grid — see "Collision" below.
+`assets/experiment.tsx`), and spawns a controllable character animated across
+8 compass directions (`assets/isometric_character_idle.png` and
+`assets/isometric_character_run.png`). Move with WASD or arrow keys. Movement
+is blocked by each tile's hand-drawn Tile Collision Editor shape, not a
+full-tile grid — see "Collision" below.
 
 ## Assets
 
-`assets/experiment.aseprite` and `assets/isometric_char_1.aseprite` are the
-Aseprite sources; `experiment.tsx` and the character sprite loading both
-reference the exported `.png` siblings instead, since Bevy's `ImageLoader`
-can't read raw `.aseprite` files. Re-export after editing the `.aseprite`
-sources with:
+`assets/experiment.aseprite` is the Aseprite source for the tileset;
+`experiment.tsx` references the exported `.png` sibling instead, since
+Bevy's `ImageLoader` can't read raw `.aseprite` files. Re-export after
+editing it with:
 
 ```sh
 aseprite -b assets/experiment.aseprite --save-as assets/experiment.png
-aseprite -b assets/isometric_char_1.aseprite --save-as assets/isometric_char_1.png
 ```
+
+The two character sheets are hand-authored PNGs with no `.aseprite` source
+checked in. Both are 64x64-per-frame, 8 rows (one per `FacingDirection`,
+see that enum's doc comment in `src/character.rs` for the row-to-direction
+mapping and how it was derived) — idle is 8 columns, run is 6.
 
 ## Collision
 
