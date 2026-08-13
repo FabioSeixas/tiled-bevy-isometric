@@ -248,6 +248,26 @@ them from the map asset. They agree with `IsoGrid` (extent `1280`, topmost
 layer at `z=0`). `map.tmx` also has exactly one gid per cell — no stacked or
 composite tiles exist in this map.
 
+## Untagged sprite sheets: derive the row/direction mapping, don't guess it
+
+`isometric_character_idle.png`/`isometric_character_run.png` (hand-authored,
+no frame-tag metadata) needed their 8-row-to-`FacingDirection` mapping
+reverse-engineered before `character.rs` could index them — see that file's
+`FacingDirection` doc comment for the full derivation (mirror-pair pixel
+diffing to find left/right pairs, self-shadow amount to split front-facing
+from back-facing, and the run sheet's sprint lean/trailing-leg kinematics to
+resolve left vs. right once the idle sheet's shading turned out to be a
+fixed-light-source artifact, not a facing cue). If another untagged sheet
+needs the same treatment, reuse this method rather than eyeballing poses —
+the self-shadow-as-facing-cue trap in particular is easy to fall into and
+gave a backwards mapping on the first pass.
+
+`debug_probe.rs`'s `SIM_KEYS` probe now also takes `SIM_IDLE_FRAMES`: it
+releases the simulated keys after `SIM_FRAMES` and holds for that many more
+frames before the screenshot, so you can capture the character settled into
+its *idle* pose facing a given direction (not just mid-stride) — used to
+verify all 8 idle and 8 running poses for the sprite swap above.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
